@@ -20,7 +20,8 @@ server {
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         fastcgi_intercept_errors on;
         include fastcgi_params;
-        include cors;
+        #Day la file cors phai co
+	include cors;
     }
 
     location /public {
