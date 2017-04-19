@@ -1,0 +1,213 @@
+Introduction
+
+PageSpeed is a suite of tools from Google that will analyze and automatically optimize your website. PageSpeed consists of the following tools:
+
+PageSpeed Insights – Analyzes your website performance on both mobile and desktop platforms, ranking you on a score of 0 to 100.
+PageSpeed Module – Open source webserver modules (for Apache and Nginx) that optimize your site automatically.
+PageSpeed Optimization Libraries (PSOL) – Open source C++ libraries that are webserver-independent (if you can’t/won’t use the PageSpeed Modules for Apache/Nginx).
+Caveats
+
+Apache uses dynamic modules. Essentially, the core Apache binary is always present, and modules are loaded and unloaded by the administrator as needed, on the fly. This makes Apache very flexible, since a module can be loaded at any time (even after Apache is compiled/installed/running). However, Nginx doesn’t have this luxury. Nginx modules need to be included at compile-time. Some distributions (like Debian or Ubuntu) offer versions of Nginx that are pre-compiled with extra modules installed, but otherwise, you need to compile Nginx yourself (with your extra modules). The sections below will describe how to do this.
+
+Prerequisites
+
+You’ll need to install the necessary tools to compile software. In Ubuntu, this is the build-essential package.
+
+sudo apt-get update && sudo apt-get install build-essential
+This guide assumes you already have Nginx installed. If that’s the case, you’ll need to remove it. This shouldn’t remove your config files, but you should back them up to be sure.
+
+sudo apt-get remove '^nginx.*'
+Nginx build script
+
+You can copy/paste each command below, but I wrote a quick script to compile Nginx with the PageSpeed Module, as well at the HeadersMore module (to add/remove HTTP headers). A script is useful in this scenario because you won’t be receiving Nginx updates from the regular repositories, so you’ll need to repeat this process each time a new version of Nginx (or your modules) come out. This script is essentially a modified version of the official Nginx build instructions. This script is tested on Ubuntu 16.04, and it should be executed as root (or using sudo).
+
+The script is over at GitHub, but also pasted below (check GitHub first).
+
+#!/bin/bash
+
+## This script should be run as root, since it's compiling software from source
+
+## Set some variables
+DIRECTORY=/usr/local/src
+PAGESPEED_VERSION=1.11.33.3
+HEADERS_VERSION=0.31
+NGINX_VERSION=1.11.3
+
+## create group and user
+addgroup www-data
+useradd -c www-data -d /var/www -M -g www-data -s /usr/sbin/nologin www-data
+
+## Get PageSpeed
+cd ${DIRECTORY}
+wget https://github.com/pagespeed/ngx_pagespeed/archive/release-${PAGESPEED_VERSION}-beta.zip
+unzip release-${PAGESPEED_VERSION}-beta.zip
+rm release-${PAGESPEED_VERSION}-beta.zip
+cd ngx_pagespeed-release-${PAGESPEED_VERSION}-beta/
+wget https://dl.google.com/dl/page-speed/psol/${PAGESPEED_VERSION}.tar.gz
+tar -xzvf ${PAGESPEED_VERSION}.tar.gz
+rm ${PAGESPEED_VERSION}.tar.gz
+
+## Get HeadersMore
+cd ${DIRECTORY}
+wget https://github.com/openresty/headers-more-nginx-module/archive/v${HEADERS_VERSION}.tar.gz
+tar -xvzf v${HEADERS_VERSION}.tar.gz
+rm v${HEADERS_VERSION}.tar.gz
+
+## Get Nginx
+cd ${DIRECTORY}
+wget https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz
+tar -xvzf nginx-${NGINX_VERSION}.tar.gz
+rm nginx-${NGINX_VERSION}.tar.gz
+
+cd nginx-${NGINX_VERSION}/
+     ./configure --sbin-path=/usr/sbin/nginx \
+     --conf-path=/etc/nginx/nginx.conf \
+     --http-log-path=/var/log/nginx/access.log \
+     --error-log-path=/var/log/nginx/error.log \
+     --lock-path=/var/lock/nginx.lock \
+     --pid-path=/run/nginx.pid \
+     --user=www-data \
+     --group=www-data \
+     --http-client-body-temp-path=/var/lib/nginx/body \
+     --http-fastcgi-temp-path=/var/lib/nginx/fastcgi \
+     --http-proxy-temp-path=/var/lib/nginx/proxy \
+     --http-scgi-temp-path=/var/lib/nginx/scgi \
+     --http-uwsgi-temp-path=/var/lib/nginx/uwsgi \
+     --with-debug \
+     --with-pcre-jit \
+     --with-ipv6 \
+     --with-http_ssl_module \
+     --with-http_stub_status_module \
+     --with-http_realip_module \
+     --with-http_auth_request_module \
+     --with-http_addition_module \
+     --with-http_dav_module \
+     --with-http_flv_module \
+     --with-http_geoip_module \
+     --with-http_gunzip_module \
+     --with-http_gzip_static_module \
+     --with-http_image_filter_module \
+     --with-http_mp4_module \
+     --with-http_perl_module \
+     --with-http_random_index_module \
+     --with-http_secure_link_module \
+     --with-http_v2_module \
+     --with-http_sub_module \
+     --with-http_xslt_module \
+     --with-mail \
+     --with-mail_ssl_module \
+     --with-stream \
+     --with-stream_ssl_module \
+     --with-threads \
+     --add-module=${DIRECTORY}/headers-more-nginx-module-${HEADERS_VERSION} \
+     --add-module=${DIRECTORY}/ngx_pagespeed-release-${PAGESPEED_VERSION}-beta
+
+make
+make install
+
+echo ""
+echo "If there are no errors, the build is completed"
+echo "Use the link below to add an init file for Nginx"
+echo "https://www.nginx.com/resources/wiki/start/topics/examples/initscripts/"
+Init script
+
+Since we’re compiling from source, we need to create an init script so that we can start/stop/restart Nginx from the command line (e.g., sudo systemctl stop nginx.service). Depending on which version of Ubuntu you’re running, you’ll need to choose an init script.
+
+Ubuntu 14.10 and older use upstart, while Ubuntu 15.04 and newer use systemd. Check which init system you’re using with the command below.
+
+readlink /sbin/init
+Then, depending which you have, you’ll need to choose an init script. I’m using the init script that ships with the nginx-extras Ubuntu package, below.
+
+# Stop dance for nginx
+# =======================
+#
+# ExecStop sends SIGSTOP (graceful stop) to the nginx process.
+# If, after 5s (--retry QUIT/5) nginx is still running, systemd takes control
+# and sends SIGTERM (fast shutdown) to the main process.
+# After another 5s (TimeoutStopSec=5), and if nginx is alive, systemd sends
+# SIGKILL to all the remaining processes in the process group (KillMode=mixed).
+#
+# nginx signals reference doc:
+# http://nginx.org/en/docs/control.html
+#
+[Unit]
+Description=A high performance web server and a reverse proxy server
+After=network.target
+
+[Service]
+Type=forking
+PIDFile=/run/nginx.pid
+ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
+ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
+ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
+ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/nginx.pid
+TimeoutStopSec=5
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target
+Test Nginx
+
+At this point, Nginx should be installed and you should be able to test it. Use the commands below to make sure the binary is in your PATH, check which Nginx version is installed, that your existing configurations are ok, and that systemd works. You should also visit your website to make sure it’s loading.
+
+which nginx
+nginx -v
+sudo nginx -t
+sudo systemctl restart nginx.service
+sudo systemctl status nginx.service
+Enable PageSpeed
+
+Now that Nginx is installed and working, we need to enable the PageSpeed Module. The first thing we’ll do is create a location to store files that PageSpeed creates, then give our Nginx user permission on that directory.
+
+sudo mkdir /var/ngx_pagespeed_cache
+sudo chown www-data:www-data /var/ngx_pagespeed_cache
+Next, we’ll need to add the following lines to our server block in our Nginx website configuration.
+
+pagespeed on;
+pagespeed FileCachePath /var/ngx_pagespeed_cache;
+location ~ "\.pagespeed\.([a-z]\.)?[a-z]{2}\.[^.]{10}\.[^.]+" {
+  add_header "" "";
+}
+location ~ "^/pagespeed_static/" { }
+location ~ "^/ngx_pagespeed_beacon$" { }
+pagespeed RewriteLevel CoreFilters;
+Finally, restart PHP and Nginx.
+
+sudo systemctl restart php7.0-fpm.service
+sudo systemctl restart nginx.service
+PageSpeed Filters
+
+At the time of this writing PageSpeed offers 68 total filters. Each filter is a different adjustment that PageSpeed makes to your site. Since choosing which ones to use is not an easy task, PageSpeed offers three preconfigured options to make it easier to start: PassThrough, CoreFilters, and OptimizeForBandwidth.
+
+PassThrough – turns PageSpeed off and ignores anything related to it
+CoreFilters (34 filters) – the PageSpeed team considers this safe for most websites, and you shouldn’t have any problems with it
+OptimizeForBandwidth (16 filters) – a more narrow selections of filters and provides a stronger guarantee of safety
+In the example above, I’m using CoreFilters. In addition, I’ve enabled some extra filters, as shown below.
+
+ pagespeed on;
+ pagespeed FileCachePath /var/ngx_pagespeed_cache;
+ location ~ "\.pagespeed\.([a-z]\.)?[a-z]{2}\.[^.]{10}\.[^.]+" {
+ add_header "" "";
+ }
+ location ~ "^/pagespeed_static/" { }
+ location ~ "^/ngx_pagespeed_beacon$" { }
+ pagespeed RewriteLevel CoreFilters;
+ pagespeed EnableFilters move_css_above_scripts,move_css_to_head,prioritize_critical_css,inline_preview_images,resize_mobile_images,remove_comments,collapse_whitespace,lazyload_images,insert_dns_prefetch;
+Test PageSpeed
+
+First, you’ll want to run the command below to make sure Nginx is compiled with the PageSpeed Module (it should be at the bottom of the output).
+
+sudo nginx -V
+Next, you should use curl to make sure the PageSpeed header is being added to your site.
+
+curl -IL loganmarchione.com
+You should see the PageSpeed header somewhere in the output.
+
+...
+...
+X-Page-Speed: 1.11.33.3-0
+...
+...
+Comparison
+
+Here, you can see the before/after results of using PageSpeed. I was able to squeeze out a few more points by optimizing some settings with PageSpeed.
